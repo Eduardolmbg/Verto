@@ -1,0 +1,7 @@
+open ai compatibility
+
+analise setorial(comapracao de roe ou emtricas relevantes por setor)
+
+dados alternatviso(google trening apostas sobre a empresa no polymarket)
+
+melhorar noticias sobre a empres(atualmente tem noticias velhas ou coisas que nao sao noticias)
