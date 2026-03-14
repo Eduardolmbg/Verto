@@ -1,4 +1,4 @@
-# thesis-ai 📊
+# thesis-ai 
 
 **AI-Powered Stock Research Agent** — Agente de IA que gera relatórios de análise fundamentalista de ações brasileiras automaticamente.
 
@@ -6,10 +6,10 @@
 
 Você digita um ticker de ação brasileira (ex: `WEGE3`, `PETR4`, `VALE3`) e o sistema:
 
-1. 🔍 **Pesquisa** informações sobre a empresa na web (Google Search via Gemini ou DuckDuckGo como fallback)
-2. 📊 **Coleta** indicadores financeiros (P/L, EV/EBITDA, ROE, Dividend Yield, etc.)
-3. 📰 **Busca** notícias recentes e classifica como positivas, negativas ou neutras
-4. 📝 **Gera** um relatório completo de análise fundamentalista em Markdown/HTML
+1. **Pesquisa** informações sobre a empresa na web (Google Search via Gemini ou DuckDuckGo como fallback)
+2. **Coleta** indicadores financeiros (P/L, EV/EBITDA, ROE, Dividend Yield, etc.)
+3. **Busca** notícias recentes e classifica como positivas, negativas ou neutras
+4. **Gera** um relatório completo de análise fundamentalista em Markdown/HTML
 
 ## Arquitetura
 
