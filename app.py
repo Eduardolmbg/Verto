@@ -1,4 +1,4 @@
-"""thesis-ai — AI-Powered Equity Research (Streamlit app)."""
+"""Verto — AI-Powered Equity Research (Streamlit app)."""
 
 from __future__ import annotations
 
@@ -30,9 +30,15 @@ from utils.theme import (
 
 # ── Page config ──────────────────────────────────────────────────────────
 
+from pathlib import Path
+from PIL import Image as _PIL_Image
+
+_logo2_path = Path(__file__).resolve().parent / "logo2.png"
+_page_icon = _PIL_Image.open(_logo2_path) if _logo2_path.exists() else None
+
 st.set_page_config(
     page_title=config.APP_NAME,
-    page_icon=None,
+    page_icon=_page_icon,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -105,7 +111,7 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     st.markdown(
-        f"**thesis-ai** v{config.APP_VERSION}\n\n"
+        f"**Verto** v{config.APP_VERSION}\n\n"
         "Agente de IA que gera relatorios de analise "
         "fundamentalista de acoes brasileiras.",
         unsafe_allow_html=False,
@@ -122,6 +128,7 @@ render_header()
 
 ticker_input = st.text_input(
     "Ticker da acao",
+    value=st.session_state.pop("chip_ticker", ""),
     placeholder="Digite o ticker: WEGE3",
     max_chars=10,
     help="Codigo da acao na B3.",
@@ -245,7 +252,9 @@ STEP_LABELS = [
     "5/5  Gerando sintese de investimento...",
 ]
 
-if analyze_btn:
+auto_analyze = st.session_state.pop("auto_analyze", False)
+
+if analyze_btn or auto_analyze:
     # Validacoes
     if not active_key:
         st.error("Configure sua API key na sidebar antes de gerar analises.")
@@ -464,4 +473,15 @@ if "last_result" in st.session_state:
 
 elif not ticker_input:
     render_empty_state()
+
+    # Ticker chips clicáveis
+    _CHIPS = ["VALE3", "PETR4", "WEGE3", "ITUB4", "BBAS3", "RENT3"]
+    _chip_cols = st.columns(len(_CHIPS))
+    for _col, _t in zip(_chip_cols, _CHIPS):
+        with _col:
+            if st.button(_t, key=f"chip_{_t}", use_container_width=True):
+                st.session_state["chip_ticker"] = _t
+                st.session_state["auto_analyze"] = True
+                st.rerun()
+
     render_footer(config.APP_VERSION)

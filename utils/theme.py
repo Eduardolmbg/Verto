@@ -298,6 +298,22 @@ tbody tr:hover td {
     border-color: %(accent)s;
     transform: translateY(-1px);
 }
+/* Chip buttons rendered via st.button */
+div[data-testid="stButton"] button[kind="secondary"] {
+    background: %(surface)s !important;
+    border: 1px solid %(border)s !important;
+    border-radius: 8px !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-weight: 600 !important;
+    font-size: 0.9rem !important;
+    color: %(accent)s !important;
+    transition: all 0.2s ease !important;
+}
+div[data-testid="stButton"] button[kind="secondary"]:hover {
+    background: %(accent_dim)s !important;
+    border-color: %(accent)s !important;
+    transform: translateY(-1px) !important;
+}
 
 /* ── Step indicator ─────────────────────────────────────── */
 .step-item {
@@ -595,17 +611,34 @@ def inject_css() -> None:
 
 def render_header() -> None:
     """Render the app header with logo and gradient line."""
+    import base64
     import streamlit as st
+    from pathlib import Path
+
+    logo_path = Path(__file__).resolve().parent.parent / "canvas.png"
+    logo_html = ""
+    if logo_path.exists():
+        b64 = base64.b64encode(logo_path.read_bytes()).decode()
+        logo_html = (
+            f'<a href="/" target="_self" style="display:inline-block;line-height:0;">'
+            f'<img src="data:image/png;base64,{b64}" '
+            f'style="height:140px;width:auto;mix-blend-mode:multiply;cursor:pointer;" '
+            f'alt="Verto" />'
+            f'</a>'
+        )
+    else:
+        logo_html = (
+            f'<div class="logo-title">'
+            f'{icon("trending_up", color=COLORS["accent"])}Verto'
+            f'</div>'
+            f'<div class="logo-subtitle">AI-Powered Equity Research</div>'
+        )
 
     st.markdown(
         f"""
-        <div class="fade-in">
-            <div class="logo-title">
-                {icon("trending_up", color=COLORS["accent"])}
-                thesis<span class="accent">-ai</span>
-            </div>
-            <div class="logo-subtitle">AI-Powered Equity Research</div>
-            <div class="gradient-line"></div>
+        <div class="fade-in" style="padding-bottom:8px;">
+            {logo_html}
+            <div class="gradient-line" style="margin-top:16px;"></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -620,7 +653,7 @@ def render_sidebar_brand() -> None:
         f"""
         <div class="sidebar-brand">
             {icon("trending_up", size=18, color=COLORS["accent"])}
-            thesis<span class="accent">-ai</span>
+            Verto
         </div>
         """,
         unsafe_allow_html=True,
@@ -643,19 +676,6 @@ def render_empty_state() -> None:
             <div style="font-size:0.9rem;color:{COLORS["text_secondary"]};">
                 Exemplos de tickers populares:
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Ticker chips
-    st.markdown(
-        f"""
-        <div style="text-align:center;margin-bottom:32px;" class="fade-in fade-in-delay-1">
-            <span class="ticker-chip">VALE3</span>
-            <span class="ticker-chip">PETR4</span>
-            <span class="ticker-chip">WEGE3</span>
-            <span class="ticker-chip">ITUB4</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -691,7 +711,7 @@ def render_footer(version: str) -> None:
     st.markdown(
         f"""
         <div class="footer">
-            thesis-ai v{version} &middot; Nao constitui recomendacao de investimento
+            Verto v{version}
         </div>
         """,
         unsafe_allow_html=True,
@@ -840,7 +860,7 @@ def render_report_header(
         f'<div class="report-header-text">'
         f'<h1>Analise: {company_name} ({ticker})</h1>'
         f'<span class="report-header-meta">'
-        f'Gerado em {date_str} por thesis-ai | Provider: {provider_name}'
+        f'Gerado em {date_str} por Verto | Provider: {provider_name}'
         f'</span>'
         f'</div>'
         f'</div>'

@@ -1,5 +1,5 @@
 # Analise: {company_name} ({ticker})
-*Gerado em {date} por thesis-ai | Provider: {provider_name}*
+*Gerado em {date} por Verto | Provider: {provider_name}*
 
 ---
 
@@ -21,6 +21,4 @@
 
 ---
 
-*Este relatorio foi gerado por inteligencia artificial e nao constitui recomendacao de investimento. Faca sua propria analise antes de investir.*
-
-*Powered by thesis-ai*
+*Powered by Verto*

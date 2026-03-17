@@ -8,3 +8,4 @@ markdownify>=0.14.1
 groq>=0.25.0
 yfinance>=0.2.0
 plotly>=5.0.0
+Pillow>=10.0.0

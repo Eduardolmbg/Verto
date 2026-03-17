@@ -1,4 +1,4 @@
-"""Configuracoes centrais do thesis-ai."""
+"""Configuracoes centrais do Verto."""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ SEARCH_LANGUAGE: str = "pt-br"
 SEARCH_REGION: str = "BR"
 
 # ── App metadata ─────────────────────────────────────────────────────────
-APP_NAME = "thesis-ai"
-APP_TITLE = "thesis-ai"
+APP_NAME = "Verto"
+APP_TITLE = "Verto"
 APP_SUBTITLE = "AI-Powered Equity Research"
 APP_VERSION = "0.1.0"

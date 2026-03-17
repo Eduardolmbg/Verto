@@ -14,7 +14,7 @@ from research.brapi import (
     extract_structured_data,
 )
 from research.yahoo_finance import YFinanceClient
-from research.web_search import research
+from research.web_search import research, search_recent_news, format_news_for_prompt
 from utils.formatting import build_indicators_table, structured_data_summary
 
 logger = logging.getLogger(__name__)
@@ -193,19 +193,34 @@ class StockAnalyst:
             return ""
 
     def _step_news(self, ticker: str, result: AnalysisResult) -> str:
-        """Etapa 3: noticias recentes (web search + LLM)."""
+        """Etapa 3: noticias recentes (ddgs.news ultimos 30 dias + LLM)."""
         try:
             company = result.company_name or ticker
-            query = prompts.NEWS_SEARCH_QUERY.format(
-                ticker=ticker, company_name=company
+
+            # Busca dedicada de noticias recentes via ddgs.news()
+            news_items = search_recent_news(ticker, company_name=company, max_results=10)
+            news_context = format_news_for_prompt(news_items)
+
+            # Se Gemini (search nativo), complementa com busca grounding
+            if self.provider.supports_search and not news_items:
+                query = prompts.NEWS_SEARCH_QUERY.format(
+                    ticker=ticker, company_name=company
+                )
+                prompt = prompts.NEWS_PROMPT.format(
+                    ticker=ticker, nome=company, noticias=news_context
+                )
+                return research(
+                    query=query,
+                    provider=self.provider,
+                    synthesis_prompt=prompt,
+                    system_prompt=prompts.SYSTEM_PROMPT,
+                )
+
+            prompt = prompts.NEWS_PROMPT.format(
+                ticker=ticker, nome=company, noticias=news_context
             )
-            prompt = prompts.NEWS_PROMPT.format(ticker=ticker, nome=company)
-            return research(
-                query=query,
-                provider=self.provider,
-                synthesis_prompt=prompt,
-                system_prompt=prompts.SYSTEM_PROMPT,
-            )
+            return self.provider.generate(prompt, system_prompt=prompts.SYSTEM_PROMPT)
+
         except Exception as e:
             logger.exception("Erro na etapa de noticias para %s", ticker)
             result.errors["news"] = str(e)
