@@ -1,27 +1,27 @@
-"""Provider Groq — LPU inference via SDK OpenAI-compatible."""
+"""Provider OpenAI GPT via SDK oficial."""
 
 from __future__ import annotations
 
 import os
 
-from groq import Groq
+from openai import OpenAI
 
 from providers.base import BaseLLMProvider
 
 
-class GroqProvider(BaseLLMProvider):
-    """Groq LPU via groq SDK."""
+class OpenAIProvider(BaseLLMProvider):
+    """OpenAI GPT via openai SDK."""
 
-    name = "groq"
+    name = "openai"
 
-    def __init__(self, api_key: str | None = None, model: str = "llama-3.3-70b-versatile") -> None:
+    def __init__(self, api_key: str | None = None, model: str = "gpt-4.1") -> None:
         super().__init__(api_key=api_key or os.getenv("LLM_API_KEY", ""))
         if not self.api_key:
             raise ValueError(
-                "API key do Groq nao configurada. "
+                "API key da OpenAI nao configurada. "
                 "Defina LLM_API_KEY no .env ou passe via sidebar."
             )
-        self._client = Groq(api_key=self.api_key)
+        self._client = OpenAI(api_key=self.api_key)
         self._model = model
 
     # ── Core API ─────────────────────────────────────────────────────────
@@ -36,11 +36,13 @@ class GroqProvider(BaseLLMProvider):
         response = self._client.chat.completions.create(
             model=self._model,
             messages=messages,
+            temperature=0.3,
+            max_tokens=4096,
         )
         return response.choices[0].message.content or ""
 
     def generate_with_search(
         self, prompt: str, *, system_prompt: str | None = None
     ) -> str:
-        """Groq nao suporta search nativo — delega para generate()."""
+        """OpenAI nao suporta search nativo gratuito — delega para generate()."""
         return self.generate(prompt, system_prompt=system_prompt)

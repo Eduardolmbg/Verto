@@ -8,7 +8,6 @@ from google import genai
 from google.genai import types
 
 from providers.base import BaseLLMProvider
-import config
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -16,15 +15,15 @@ class GeminiProvider(BaseLLMProvider):
 
     name = "gemini"
 
-    def __init__(self, api_key: str | None = None) -> None:
+    def __init__(self, api_key: str | None = None, model: str = "gemini-2.5-flash") -> None:
         super().__init__(api_key=api_key or os.getenv("LLM_API_KEY", ""))
         if not self.api_key:
             raise ValueError(
-                "API key do Gemini não configurada. "
+                "API key do Gemini nao configurada. "
                 "Defina LLM_API_KEY no .env ou passe via sidebar."
             )
         self._client = genai.Client(api_key=self.api_key)
-        self._model = config.GEMINI_MODEL
+        self._model = model
 
     # ── Core API ─────────────────────────────────────────────────────────
 

@@ -33,6 +33,7 @@ class AnalysisResult:
     brapi_data: dict[str, Any] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
     quarterly_data: dict = field(default_factory=dict)
+    macro_data: dict = field(default_factory=dict)
 
     @property
     def success(self) -> bool:
@@ -109,15 +110,13 @@ def _format_macro_for_llm(macro_data: dict) -> str:
     if not macro_data:
         return "Dados macro nao disponiveis."
 
+    from research.macro import format_macro_value
+
     parts: list[str] = []
-    if "selic" in macro_data:
-        parts.append(f"Selic Meta: {macro_data['selic']:.2f}%")
-    if "ipca_12m" in macro_data:
-        parts.append(f"IPCA acumulado 12m: {macro_data['ipca_12m']:.2f}%")
-    if "usdbrl" in macro_data:
-        parts.append(f"Cambio USD/BRL: R$ {macro_data['usdbrl']:.2f}")
-    if "brent" in macro_data:
-        parts.append(f"Brent (petroleo): US$ {macro_data['brent']:.1f}/barril")
+    for key, info in macro_data.items():
+        label = info["label"]
+        formatted = format_macro_value(info["format"], info["value"])
+        parts.append(f"{label}: {formatted}")
 
     return "\n".join(parts) if parts else "Dados macro nao disponiveis."
 
@@ -136,11 +135,10 @@ class StockAnalyst:
         self.brapi = BrapiClient(token=brapi_token)
         self.yahoo = YFinanceClient()
 
-    def analyze(self, ticker: str, macro_data: dict | None = None) -> AnalysisResult:
+    def analyze(self, ticker: str) -> AnalysisResult:
         """Executa a analise completa para o ticker informado."""
         ticker = ticker.strip().upper()
         result = AnalysisResult(ticker=ticker)
-        self._macro_data = macro_data or {}
 
         # Etapa 0 — Dados estruturados (yfinance primario, brapi fallback)
         self.on_progress("Buscando dados financeiros...", 0.0)
@@ -151,6 +149,9 @@ class StockAnalyst:
             result.quarterly_data = self.yahoo.get_quarterly_trend(ticker)
         except Exception:
             logger.debug("Dados trimestrais indisponiveis para %s", ticker)
+
+        # Buscar dados macro relevantes ao setor
+        self._step_fetch_macro(result)
 
         # Etapa 1 — Perfil da Empresa
         self.on_progress("Pesquisando perfil da empresa...", 0.20)
@@ -212,6 +213,21 @@ class StockAnalyst:
                 f"Yahoo Finance e brapi.dev indisponiveis. "
                 f"Usando apenas busca web. ({e})"
             )
+
+    def _step_fetch_macro(self, result: AnalysisResult) -> None:
+        """Busca dados macro relevantes ao setor/industria da empresa."""
+        from research.macro import MacroClient, get_relevant_macro_indicators
+
+        sector = result.brapi_data.get("setor", "") if result.brapi_data else ""
+        industry = result.brapi_data.get("industria", "") if result.brapi_data else ""
+        indicators = get_relevant_macro_indicators(sector, industry)
+        try:
+            macro = MacroClient()
+            result.macro_data = macro.get_macro_context(indicators=indicators)
+        except Exception:
+            logger.debug("Dados macro indisponiveis")
+            result.macro_data = {}
+        self._macro_data = result.macro_data
 
     def _step_profile(self, ticker: str, result: AnalysisResult) -> str:
         """Etapa 1: perfil da empresa (dados estruturados + web search)."""

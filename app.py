@@ -9,11 +9,11 @@ import streamlit as st
 
 import config
 from providers import get_provider
+from providers.models import PROVIDER_MODELS, get_model_options, get_default_model, get_model_display_name
 from agents.stock_analyst import StockAnalyst
 from reports.generator import generate_report, save_report, report_to_html
 from research.yahoo_finance import YFinanceClient
 from research.peers import get_peers
-from research.macro import MacroClient
 from agents.prompts import PEER_COMPARISON_PROMPT, SYSTEM_PROMPT
 from utils.formatting import validate_ticker
 from utils.theme import (
@@ -48,13 +48,22 @@ st.set_page_config(
 
 inject_css()
 
-# Busca macro uma vez por sessao
-if "macro_data" not in st.session_state:
-    _macro = MacroClient()
-    st.session_state["macro_data"] = _macro.get_macro_context()
-macro_data = st.session_state.get("macro_data", {})
-
 # ── Sidebar ──────────────────────────────────────────────────────────────
+
+# Inicializar dicionario de keys por provider no session_state
+if "api_keys" not in st.session_state:
+    st.session_state["api_keys"] = {}
+    import os as _os
+    for _pid in PROVIDER_MODELS:
+        _env_key = _os.environ.get(f"{_pid.upper()}_API_KEY", "")
+        if _env_key:
+            st.session_state["api_keys"][_pid] = _env_key
+    # Fallback: LLM_API_KEY generico para o provider salvo
+    _generic_key = config.LLM_API_KEY
+    if _generic_key:
+        _saved_prov = config.LLM_PROVIDER.lower()
+        if _saved_prov not in st.session_state["api_keys"] or not st.session_state["api_keys"].get(_saved_prov):
+            st.session_state["api_keys"][_saved_prov] = _generic_key
 
 with st.sidebar:
     render_sidebar_brand()
@@ -64,29 +73,62 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    _provider_options = ["gemini", "openai", "groq"]
-    _saved_provider = config.LLM_PROVIDER.lower()
+    _provider_options = list(PROVIDER_MODELS.keys())
+    _provider_labels = {k: v["name"] for k, v in PROVIDER_MODELS.items()}
+    _saved_provider = st.session_state.get("provider_name", config.LLM_PROVIDER.lower())
     _provider_index = _provider_options.index(_saved_provider) if _saved_provider in _provider_options else 0
 
     provider_name = st.selectbox(
         "LLM Provider",
         options=_provider_options,
         index=_provider_index,
-        help="Selecione o provedor de LLM. Apenas Gemini e Groq estao implementados.",
+        format_func=lambda x: _provider_labels.get(x, x),
         label_visibility="collapsed",
     )
 
+    # Modelo — muda dinamicamente com o provider
+    st.markdown(
+        '<div class="sidebar-section-title">Modelo</div>',
+        unsafe_allow_html=True,
+    )
+
+    _model_options = get_model_options(provider_name)
+    _model_ids = [m[0] for m in _model_options]
+    _model_labels = {m[0]: m[1] for m in _model_options}
+    _default_model = st.session_state.get("model", get_default_model(provider_name))
+    _default_idx = _model_ids.index(_default_model) if _default_model in _model_ids else 0
+
+    selected_model = st.selectbox(
+        "Modelo",
+        options=_model_ids,
+        index=_default_idx,
+        format_func=lambda x: _model_labels.get(x, x),
+        label_visibility="collapsed",
+    )
+
+    # API Key — carrega automaticamente a key salva para este provider
     st.markdown(
         '<div class="sidebar-section-title">API Key</div>',
         unsafe_allow_html=True,
     )
 
+    _provider_info = PROVIDER_MODELS[provider_name]
+    _saved_key = st.session_state["api_keys"].get(provider_name, "")
+
     api_key = st.text_input(
         "API Key",
         type="password",
-        value=config.LLM_API_KEY,
+        value=_saved_key,
+        placeholder=f"{_provider_info['key_prefix']}...",
         help="Cole aqui a API key do provider selecionado.",
         label_visibility="collapsed",
+        key=f"api_key_{provider_name}",
+    )
+
+    st.markdown(
+        f'<a href="{_provider_info["key_url"]}" target="_blank" '
+        f'style="color:#71717a;font-size:11px;">Obter API Key &rarr;</a>',
+        unsafe_allow_html=True,
     )
 
     st.markdown(
@@ -97,13 +139,18 @@ with st.sidebar:
     brapi_token = st.text_input(
         "brapi.dev Token",
         type="password",
-        value=config.BRAPI_TOKEN,
+        value=st.session_state.get("brapi_token", config.BRAPI_TOKEN),
         help="Fonte primaria: Yahoo Finance (automatico). brapi.dev e usado como fallback.",
         label_visibility="collapsed",
     )
 
     if st.button("Salvar configuracao", use_container_width=True):
+        # Salvar key para ESTE provider
+        if api_key:
+            st.session_state["api_keys"][provider_name] = api_key
+
         st.session_state["provider_name"] = provider_name
+        st.session_state["model"] = selected_model
         st.session_state["api_key"] = api_key
         st.session_state["brapi_token"] = brapi_token
         config.save_env(
@@ -111,7 +158,34 @@ with st.sidebar:
             LLM_API_KEY=api_key,
             BRAPI_TOKEN=brapi_token,
         )
-        st.success("Configuracao salva no .env.")
+        st.success("Configuracao salva.")
+
+    st.divider()
+
+    # Status das keys configuradas
+    st.markdown(
+        '<p style="color:#71717a;font-size:11px;margin-bottom:4px;">API Keys salvas:</p>',
+        unsafe_allow_html=True,
+    )
+    for _pid, _pinfo in PROVIDER_MODELS.items():
+        _has_key = bool(st.session_state["api_keys"].get(_pid, ""))
+        _icon = "●" if _has_key else "○"
+        _color = "#10b981" if _has_key else "#3f3f46"
+        st.markdown(
+            f'<span style="color:{_color};font-size:12px;">{_icon} {_pinfo["name"]}</span>',
+            unsafe_allow_html=True,
+        )
+
+    # Modelo ativo
+    _active_prov = st.session_state.get("provider_name", provider_name)
+    _active_mod = st.session_state.get("model", selected_model)
+    _prov_display = PROVIDER_MODELS.get(_active_prov, {}).get("name", _active_prov)
+    _mod_display = get_model_display_name(_active_prov, _active_mod)
+    st.markdown(
+        f'<p style="color:#71717a;font-size:11px;margin-top:8px;">'
+        f'Ativo: {_prov_display} &mdash; {_mod_display}</p>',
+        unsafe_allow_html=True,
+    )
 
     st.divider()
 
@@ -126,9 +200,13 @@ with st.sidebar:
         unsafe_allow_html=False,
     )
 
-# Resolve provider/key from session or defaults
+# Resolve provider/key/model from session or defaults
 active_provider = st.session_state.get("provider_name", provider_name)
+active_model = st.session_state.get("model", selected_model)
 active_key = st.session_state.get("api_key", api_key)
+# Garantir que usamos a key do provider ativo
+if not active_key:
+    active_key = st.session_state["api_keys"].get(active_provider, "")
 active_brapi_token = st.session_state.get("brapi_token", brapi_token)
 
 # ── Main area ────────────────────────────────────────────────────────────
@@ -443,15 +521,12 @@ def _render_macro_bar(macro_data: dict) -> None:
     if not macro_data:
         return
 
+    from research.macro import format_macro_value
+
     items: list[tuple[str, str]] = []
-    if "selic" in macro_data:
-        items.append(("Selic", f'{macro_data["selic"]:.2f}%'))
-    if "ipca_12m" in macro_data:
-        items.append(("IPCA 12m", f'{macro_data["ipca_12m"]:.2f}%'))
-    if "usdbrl" in macro_data:
-        items.append(("USD/BRL", f'R$ {macro_data["usdbrl"]:.2f}'))
-    if "brent" in macro_data:
-        items.append(("Brent", f'US$ {macro_data["brent"]:.1f}'))
+    for _key, info in macro_data.items():
+        formatted = format_macro_value(info["format"], info["value"])
+        items.append((info["label"], formatted))
 
     if not items:
         return
@@ -837,7 +912,8 @@ auto_analyze = st.session_state.pop("auto_analyze", False)
 if analyze_btn or auto_analyze:
     # Validacoes
     if not active_key:
-        st.error("Configure sua API key na sidebar antes de gerar analises.")
+        _prov_name = PROVIDER_MODELS.get(active_provider, {}).get("name", active_provider)
+        st.error(f"API Key nao configurada para {_prov_name}. Configure na sidebar.")
         st.stop()
 
     is_valid, ticker_or_msg = validate_ticker(ticker_input)
@@ -849,7 +925,7 @@ if analyze_btn or auto_analyze:
 
     # Inicializa provider
     try:
-        provider = get_provider(active_provider, api_key=active_key)
+        provider = get_provider(active_provider, api_key=active_key, model=active_model)
     except (ValueError, NotImplementedError) as e:
         st.error(str(e))
         st.stop()
@@ -883,7 +959,7 @@ if analyze_btn or auto_analyze:
             on_progress=update_progress,
             brapi_token=active_brapi_token or None,
         )
-        result = analyst.analyze(ticker, macro_data=macro_data)
+        result = analyst.analyze(ticker)
     elapsed = time.time() - t_start
 
     # Limpa progresso
@@ -905,6 +981,7 @@ if analyze_btn or auto_analyze:
     st.session_state["last_ticker"] = ticker
     st.session_state["last_elapsed"] = elapsed
     st.session_state["last_provider"] = active_provider
+    st.session_state["last_model"] = active_model
 
 # ── Render report (from session_state or fresh) ──────────────────────────
 
@@ -913,9 +990,13 @@ if "last_result" in st.session_state:
     ticker = st.session_state["last_ticker"]
     elapsed = st.session_state["last_elapsed"]
     active_provider = st.session_state.get("last_provider", active_provider)
+    active_model = st.session_state.get("last_model", active_model)
 
     # Gera relatorio (markdown para export)
-    report_md = generate_report(result, provider_name=active_provider)
+    _prov_display = PROVIDER_MODELS.get(active_provider, {}).get("name", active_provider)
+    _mod_display = get_model_display_name(active_provider, active_model)
+    _provider_label = f"{_prov_display} — {_mod_display}"
+    report_md = generate_report(result, provider_name=_provider_label)
     saved_path = save_report(report_md, ticker)
 
     # Status bar
@@ -947,9 +1028,9 @@ if "last_result" in st.session_state:
         company_name=result.company_name or ticker,
         logo_url=logo_url,
         date_str=date_str,
-        provider_name=active_provider,
+        provider_name=_provider_label,
     )
-    _render_macro_bar(macro_data)
+    _render_macro_bar(result.macro_data)
 
     # ── Data cards ───────────────────────────────────────────────────────
     if result.brapi_data:
@@ -1018,7 +1099,7 @@ if "last_result" in st.session_state:
     # ── Section 5: Peer comparison (on-demand) ───────────────────────────
     st.markdown("---")
     with st.expander("Comparacao Setorial", expanded=False):
-        provider = get_provider(active_provider, api_key=active_key)
+        provider = get_provider(active_provider, api_key=active_key, model=active_model)
         _render_peer_comparison_section(ticker, result.brapi_data, provider)
 
     # ── Export buttons ───────────────────────────────────────────────────
