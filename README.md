@@ -40,10 +40,15 @@ pip install -r requirements.txt
 
 Crie um arquivo `.env` na raiz:
 
-```env
-LLM_PROVIDER=gemini
-LLM_API_KEY=sua_api_key_aqui
+```bash
+# Mac/Linux
+cp .env.example .env
+
+# Windows
+copy .env.example .env
 ```
+
+Edite o `.env` e preencha sua API key.
 
 ## Uso
 
