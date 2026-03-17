@@ -32,6 +32,7 @@ class AnalysisResult:
     synthesis: str = ""
     brapi_data: dict[str, Any] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
+    quarterly_data: dict = field(default_factory=dict)
 
     @property
     def success(self) -> bool:
@@ -44,6 +45,81 @@ ProgressCallback = Callable[[str, float], None]
 
 def _noop_progress(msg: str, pct: float) -> None:
     """Callback padrao que nao faz nada."""
+
+
+def _format_quarterly_for_llm(quarterly_data: dict) -> str:
+    """Formata dados trimestrais como texto para contexto do LLM."""
+    from utils.formatting import format_currency, format_percent
+
+    quarters = quarterly_data.get("quarters", []) if quarterly_data else []
+    if not quarters:
+        return "Dados trimestrais nao disponiveis."
+
+    labels = [q.get("label", "?") for q in quarters]
+    col_w = 12
+
+    lines: list[str] = []
+    header = "Indicador".ljust(18) + " | " + " | ".join(l.rjust(col_w) for l in labels)
+    lines.append(header)
+    lines.append("-" * len(header))
+
+    metrics = [
+        ("Receita", "receita", "currency"),
+        ("Lucro Liquido", "lucro_liquido", "currency"),
+        ("EBITDA", "ebitda", "currency"),
+        ("Margem Liquida", "margem_liquida", "percent"),
+        ("Margem Bruta", "margem_bruta", "percent"),
+    ]
+
+    for label, key, fmt in metrics:
+        vals = []
+        for q in quarters:
+            val = q.get(key)
+            if isinstance(val, (int, float)):
+                if fmt == "currency":
+                    vals.append(format_currency(val).rjust(col_w))
+                else:
+                    vals.append(format_percent(val).rjust(col_w))
+            else:
+                vals.append("N/D".rjust(col_w))
+        lines.append(f"{label.ljust(18)} | {' | '.join(vals)}")
+
+    lines.append("")
+    lines.append("Variacoes (trimestre mais recente vs anterior e vs mesmo periodo ano anterior):")
+    for key, label in [
+        ("receita", "Receita"),
+        ("lucro_liquido", "Lucro Liquido"),
+        ("ebitda", "EBITDA"),
+    ]:
+        qoq = quarterly_data.get(f"{key}_qoq")
+        yoy = quarterly_data.get(f"{key}_yoy")
+        parts = []
+        if isinstance(qoq, (int, float)):
+            parts.append(f"QoQ: {qoq * 100:+.1f}%")
+        if isinstance(yoy, (int, float)):
+            parts.append(f"YoY: {yoy * 100:+.1f}%")
+        if parts:
+            lines.append(f"- {label}: {' | '.join(parts)}")
+
+    return "\n".join(lines)
+
+
+def _format_macro_for_llm(macro_data: dict) -> str:
+    """Formata dados macro como texto para contexto do LLM."""
+    if not macro_data:
+        return "Dados macro nao disponiveis."
+
+    parts: list[str] = []
+    if "selic" in macro_data:
+        parts.append(f"Selic Meta: {macro_data['selic']:.2f}%")
+    if "ipca_12m" in macro_data:
+        parts.append(f"IPCA acumulado 12m: {macro_data['ipca_12m']:.2f}%")
+    if "usdbrl" in macro_data:
+        parts.append(f"Cambio USD/BRL: R$ {macro_data['usdbrl']:.2f}")
+    if "brent" in macro_data:
+        parts.append(f"Brent (petroleo): US$ {macro_data['brent']:.1f}/barril")
+
+    return "\n".join(parts) if parts else "Dados macro nao disponiveis."
 
 
 class StockAnalyst:
@@ -60,14 +136,21 @@ class StockAnalyst:
         self.brapi = BrapiClient(token=brapi_token)
         self.yahoo = YFinanceClient()
 
-    def analyze(self, ticker: str) -> AnalysisResult:
+    def analyze(self, ticker: str, macro_data: dict | None = None) -> AnalysisResult:
         """Executa a analise completa para o ticker informado."""
         ticker = ticker.strip().upper()
         result = AnalysisResult(ticker=ticker)
+        self._macro_data = macro_data or {}
 
         # Etapa 0 — Dados estruturados (yfinance primario, brapi fallback)
         self.on_progress("Buscando dados financeiros...", 0.0)
         self._step_fetch_data(ticker, result)
+
+        # Buscar dados trimestrais (melhor esforco)
+        try:
+            result.quarterly_data = self.yahoo.get_quarterly_trend(ticker)
+        except Exception:
+            logger.debug("Dados trimestrais indisponiveis para %s", ticker)
 
         # Etapa 1 — Perfil da Empresa
         self.on_progress("Pesquisando perfil da empresa...", 0.20)
@@ -135,12 +218,15 @@ class StockAnalyst:
         try:
             data = result.brapi_data
             if data and data.get("nome") != "N/D":
+                macro_ctx = _format_macro_for_llm(self._macro_data)
                 prompt = prompts.PROFILE_PROMPT_WITH_BRAPI.format(
                     ticker=ticker,
                     nome=data.get("nome", "N/D"),
                     setor=data.get("setor", "N/D"),
                     industria=data.get("industria", "N/D"),
+                    funcionarios=str(data.get("funcionarios", "N/D")),
                     descricao=data.get("descricao", "N/D"),
+                    macro_context=macro_ctx,
                 )
             else:
                 prompt = prompts.PROFILE_PROMPT_FALLBACK.format(ticker=ticker)
@@ -229,7 +315,6 @@ class StockAnalyst:
     def _step_synthesis(self, ticker: str, result: AnalysisResult) -> str:
         """Etapa 4: sintese de investimento (LLM com todos os dados)."""
         try:
-            # Monta resumo dos dados financeiros para contexto do LLM
             if result.brapi_data:
                 financials_ctx = structured_data_summary(result.brapi_data)
                 data_level = result.brapi_data.get("_data_level", "minimal")
@@ -237,16 +322,20 @@ class StockAnalyst:
                     financials_ctx += (
                         "\n\nNota: alguns indicadores financeiros nao estavam "
                         "disponiveis via API. Baseie sua analise nos dados concretos "
-                        "fornecidos e complemente com informacoes da busca web quando "
-                        "disponivel. NAO invente numeros — se nao tiver o dado, nao cite."
+                        "fornecidos. NAO invente numeros — se nao tiver o dado, nao cite."
                     )
             else:
                 financials_ctx = result.financials or "Nao disponivel."
+
+            quarterly_ctx = _format_quarterly_for_llm(result.quarterly_data)
+            macro_ctx = _format_macro_for_llm(self._macro_data)
 
             prompt = prompts.SYNTHESIS_PROMPT.format(
                 ticker=ticker,
                 nome=result.company_name or ticker,
                 financials_data=financials_ctx,
+                quarterly_data=quarterly_ctx,
+                macro_context=macro_ctx,
                 profile=result.profile or "Nao disponivel.",
                 news=result.news or "Nao disponivel.",
             )

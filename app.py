@@ -13,6 +13,7 @@ from agents.stock_analyst import StockAnalyst
 from reports.generator import generate_report, save_report, report_to_html
 from research.yahoo_finance import YFinanceClient
 from research.peers import get_peers
+from research.macro import MacroClient
 from agents.prompts import PEER_COMPARISON_PROMPT, SYSTEM_PROMPT
 from utils.formatting import validate_ticker
 from utils.theme import (
@@ -46,6 +47,12 @@ st.set_page_config(
 )
 
 inject_css()
+
+# Busca macro uma vez por sessao
+if "macro_data" not in st.session_state:
+    _macro = MacroClient()
+    st.session_state["macro_data"] = _macro.get_macro_context()
+macro_data = st.session_state.get("macro_data", {})
 
 # ── Sidebar ──────────────────────────────────────────────────────────────
 
@@ -431,6 +438,163 @@ def _render_peer_comparison_section(ticker: str, result_brapi_data: dict, provid
                 st.warning("Nao foi possivel gerar a analise comparativa.")
 
 
+def _render_macro_bar(macro_data: dict) -> None:
+    """Renderiza barra compacta de contexto macroeconomico."""
+    if not macro_data:
+        return
+
+    items: list[tuple[str, str]] = []
+    if "selic" in macro_data:
+        items.append(("Selic", f'{macro_data["selic"]:.2f}%'))
+    if "ipca_12m" in macro_data:
+        items.append(("IPCA 12m", f'{macro_data["ipca_12m"]:.2f}%'))
+    if "usdbrl" in macro_data:
+        items.append(("USD/BRL", f'R$ {macro_data["usdbrl"]:.2f}'))
+    if "brent" in macro_data:
+        items.append(("Brent", f'US$ {macro_data["brent"]:.1f}'))
+
+    if not items:
+        return
+
+    divs = "".join(
+        f'<div style="display:flex;flex-direction:column;gap:2px;">'
+        f'<span style="color:#52525b;font-size:10px;text-transform:uppercase;'
+        f'letter-spacing:0.06em;">{label}</span>'
+        f'<span style="color:#e4e4e7;font-size:13px;'
+        f'font-family:JetBrains Mono,monospace;">{value}</span>'
+        f'</div>'
+        for label, value in items
+    )
+    st.markdown(
+        f'<div style="display:flex;gap:28px;padding:10px 16px;'
+        f'background:rgba(255,255,255,0.02);border-radius:6px;'
+        f'border:1px solid #27272a;margin:8px 0 16px 0;flex-wrap:wrap;">'
+        f'{divs}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_quarterly_trend(quarterly_data: dict) -> None:
+    """Renderiza tabela de tendencia trimestral como HTML com color coding."""
+    from utils.formatting import format_currency, format_percent
+
+    quarters = quarterly_data.get("quarters", [])
+    if not quarters:
+        st.caption("Dados trimestrais nao disponiveis.")
+        return
+
+    metrics = [
+        ("Receita", "receita", "currency"),
+        ("Lucro Liq.", "lucro_liquido", "currency"),
+        ("Margem Liq.", "margem_liquida", "percent"),
+        ("EBITDA", "ebitda", "currency"),
+        ("Margem Bruta", "margem_bruta", "percent"),
+    ]
+
+    def _fmt_q(val: object, fmt: str) -> str:
+        if not isinstance(val, (int, float)):
+            return "N/D"
+        if fmt == "currency":
+            return format_currency(val)
+        return format_percent(val)
+
+    th = (
+        "padding:8px 12px;font-size:11px;font-weight:600;"
+        "white-space:nowrap;border-bottom:1px solid #27272a;"
+    )
+    header = f'<th style="{th}color:#52525b;text-align:left;">Indicador</th>'
+    for q in quarters:
+        header += (
+            f'<th style="{th}color:#a1a1aa;text-align:right;">'
+            f'{q.get("label", "?")}</th>'
+        )
+
+    rows_html = ""
+    for i, (label, key, fmt) in enumerate(metrics):
+        bg = "rgba(255,255,255,0.025)" if i % 2 == 0 else "transparent"
+        td = (
+            f"padding:7px 12px;background:{bg};white-space:nowrap;"
+            f"font-family:JetBrains Mono,monospace;font-size:12px;"
+        )
+        row = (
+            f'<td style="{td}color:#71717a;font-family:Plus Jakarta Sans,sans-serif;">'
+            f'{label}</td>'
+        )
+        vals = [q.get(key) for q in quarters]
+        for j, val in enumerate(vals):
+            formatted = _fmt_q(val, fmt)
+            color = "#e4e4e7"
+            if j < len(vals) - 1 and isinstance(val, (int, float)):
+                prev_val = vals[j + 1]
+                if isinstance(prev_val, (int, float)):
+                    color = "#10b981" if val > prev_val else "#ef4444"
+            row += (
+                f'<td style="{td}text-align:right;color:{color};">'
+                f'{formatted}</td>'
+            )
+        rows_html += f"<tr>{row}</tr>"
+
+    html = (
+        '<div style="overflow-x:auto;margin:8px 0 4px 0;">'
+        '<table style="width:100%;border-collapse:collapse;'
+        'border:1px solid #1e1e2e;border-radius:6px;overflow:hidden;">'
+        f'<thead><tr style="background:#0f0f14;">{header}</tr></thead>'
+        f'<tbody>{rows_html}</tbody>'
+        '</table></div>'
+    )
+
+    # QoQ / YoY summary line
+    qoq_parts: list[str] = []
+    yoy_parts: list[str] = []
+    for key, label in [
+        ("receita", "Receita"),
+        ("lucro_liquido", "Lucro Liq."),
+        ("ebitda", "EBITDA"),
+    ]:
+        qoq = quarterly_data.get(f"{key}_qoq")
+        yoy = quarterly_data.get(f"{key}_yoy")
+        if isinstance(qoq, (int, float)):
+            cor = "#10b981" if qoq >= 0 else "#ef4444"
+            sinal = "+" if qoq >= 0 else ""
+            qoq_parts.append(
+                f'{label}: <span style="color:{cor};">{sinal}{qoq * 100:.1f}%</span>'
+            )
+        if isinstance(yoy, (int, float)):
+            cor = "#10b981" if yoy >= 0 else "#ef4444"
+            sinal = "+" if yoy >= 0 else ""
+            yoy_parts.append(
+                f'{label}: <span style="color:{cor};">{sinal}{yoy * 100:.1f}%</span>'
+            )
+
+    st.markdown(html, unsafe_allow_html=True)
+
+    summary_parts: list[str] = []
+    if qoq_parts:
+        summary_parts.append(
+            f'<span style="color:#52525b;font-size:10px;">QoQ</span> '
+            + " &nbsp;·&nbsp; ".join(qoq_parts)
+        )
+    if yoy_parts:
+        summary_parts.append(
+            f'<span style="color:#52525b;font-size:10px;">YoY</span> '
+            + " &nbsp;·&nbsp; ".join(yoy_parts)
+        )
+    if summary_parts:
+        st.markdown(
+            f'<p style="font-size:11px;font-family:JetBrains Mono,monospace;'
+            f'color:#71717a;margin:4px 0 0 0;">'
+            f'{"&nbsp;&nbsp;&nbsp;".join(summary_parts)}</p>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        '<p style="color:#3f3f46;font-size:10px;font-style:italic;margin:4px 0 0 0;">'
+        'Dados trimestrais: Yahoo Finance · Mais recente a esquerda · '
+        'Verde = crescimento vs trimestre anterior · Vermelho = queda</p>',
+        unsafe_allow_html=True,
+    )
+
+
 # ── Chart helper ─────────────────────────────────────────────────────────
 
 def _render_price_chart(ticker: str) -> None:
@@ -719,7 +883,7 @@ if analyze_btn or auto_analyze:
             on_progress=update_progress,
             brapi_token=active_brapi_token or None,
         )
-        result = analyst.analyze(ticker)
+        result = analyst.analyze(ticker, macro_data=macro_data)
     elapsed = time.time() - t_start
 
     # Limpa progresso
@@ -785,6 +949,7 @@ if "last_result" in st.session_state:
         date_str=date_str,
         provider_name=active_provider,
     )
+    _render_macro_bar(macro_data)
 
     # ── Data cards ───────────────────────────────────────────────────────
     if result.brapi_data:
@@ -826,6 +991,11 @@ if "last_result" in st.session_state:
             )
         else:
             st.caption("Informacao nao disponivel.")
+
+    # ── Section 2.5: Quarterly trend ─────────────────────────────────────
+    if result.quarterly_data and result.quarterly_data.get("quarters"):
+        with st.expander("Tendencia Trimestral", expanded=True):
+            _render_quarterly_trend(result.quarterly_data)
 
     # ── Section 3: News with badges ──────────────────────────────────────
     with st.expander("Noticias Recentes", expanded=True):

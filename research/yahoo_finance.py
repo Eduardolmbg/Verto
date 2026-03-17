@@ -233,6 +233,80 @@ class YFinanceClient:
                 continue
         return peers_data
 
+    def get_quarterly_trend(self, ticker: str) -> dict:
+        """Busca ultimos 5 trimestres de dados financeiros para analise de tendencia."""
+        yahoo_ticker = self._normalize_ticker(ticker)
+        try:
+            stock = yf.Ticker(yahoo_ticker)
+            q_financials = stock.quarterly_income_stmt
+
+            result: dict = {"quarters": []}
+
+            if q_financials is None or q_financials.empty:
+                return result
+
+            for col in q_financials.columns[:5]:
+                quarter_data: dict = {}
+
+                if hasattr(col, "strftime"):
+                    quarter_data["period"] = col.strftime("%Y-%m-%d")
+                    quarter_data["label"] = f"{col.year}Q{(col.month - 1) // 3 + 1}"
+                else:
+                    quarter_data["period"] = str(col)
+                    quarter_data["label"] = str(col)[:7]
+
+                for field_name, key in [
+                    ("Total Revenue", "receita"),
+                    ("Net Income", "lucro_liquido"),
+                    ("Gross Profit", "lucro_bruto"),
+                    ("Operating Income", "lucro_operacional"),
+                    ("EBITDA", "ebitda"),
+                ]:
+                    if field_name in q_financials.index:
+                        val = q_financials.loc[field_name, col]
+                        if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                            quarter_data[key] = float(val)
+
+                receita = quarter_data.get("receita")
+                if receita and isinstance(receita, (int, float)) and receita > 0:
+                    ll = quarter_data.get("lucro_liquido")
+                    lb = quarter_data.get("lucro_bruto")
+                    if ll and isinstance(ll, (int, float)):
+                        quarter_data["margem_liquida"] = ll / receita
+                    if lb and isinstance(lb, (int, float)):
+                        quarter_data["margem_bruta"] = lb / receita
+
+                result["quarters"].append(quarter_data)
+
+            quarters = result["quarters"]
+            if len(quarters) >= 2:
+                latest, previous = quarters[0], quarters[1]
+                for key in ["receita", "lucro_liquido", "ebitda"]:
+                    curr, prev = latest.get(key), previous.get(key)
+                    if (
+                        isinstance(curr, (int, float))
+                        and isinstance(prev, (int, float))
+                        and prev != 0
+                    ):
+                        result[f"{key}_qoq"] = (curr - prev) / abs(prev)
+
+            if len(quarters) >= 5:
+                latest, year_ago = quarters[0], quarters[4]
+                for key in ["receita", "lucro_liquido", "ebitda"]:
+                    curr, prev = latest.get(key), year_ago.get(key)
+                    if (
+                        isinstance(curr, (int, float))
+                        and isinstance(prev, (int, float))
+                        and prev != 0
+                    ):
+                        result[f"{key}_yoy"] = (curr - prev) / abs(prev)
+
+            return result
+
+        except Exception as e:
+            logger.debug("Erro ao buscar dados trimestrais para %s: %s", yahoo_ticker, e)
+            return {}
+
     @staticmethod
     def _normalize_ticker(ticker: str) -> str:
         """Converte ticker brasileiro para formato Yahoo Finance (adiciona .SA)."""
