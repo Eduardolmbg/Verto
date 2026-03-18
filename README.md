@@ -37,7 +37,7 @@
 ### Mac / Linux
 
 ```bash
-git clone https://github.com/seu-usuario/Verto.git
+git clone https://github.com/Eduardolmbg/Verto.git
 cd Verto
 ./setup.sh       # instala tudo
 nano .env        # cole sua API key
@@ -47,7 +47,7 @@ nano .env        # cole sua API key
 ### Manual
 
 ```bash
-git clone https://github.com/seu-usuario/Verto.git
+git clone https://github.com/Eduardolmbg/Verto.git
 cd Verto
 python -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
