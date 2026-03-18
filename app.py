@@ -5,6 +5,11 @@ from __future__ import annotations
 import time
 from datetime import datetime
 
+
+def _escape_dollars(text: str) -> str:
+    """Escapa cifroes para evitar que Streamlit interprete como LaTeX."""
+    return text.replace("$", r"\$")
+
 import streamlit as st
 
 import config
@@ -144,7 +149,7 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
-    if st.button("Salvar configuracao", use_container_width=True):
+    if st.button("Salvar configuracao", width="stretch"):
         # Salvar key para ESTE provider
         if api_key:
             st.session_state["api_keys"][provider_name] = api_key
@@ -225,7 +230,7 @@ ticker_input = st.text_input(
 analyze_btn = st.button(
     "Gerar Analise",
     type="primary",
-    use_container_width=True,
+    width="stretch",
 )
 
 # ── Peer comparison helpers ──────────────────────────────────────────────
@@ -511,7 +516,7 @@ def _render_peer_comparison_section(ticker: str, result_brapi_data: dict, provid
             try:
                 analysis = provider.generate(prompt, system_prompt=SYSTEM_PROMPT)
                 st.markdown("**Analise Comparativa**")
-                st.markdown(analysis)
+                st.markdown(_escape_dollars(analysis))
             except Exception:
                 st.warning("Nao foi possivel gerar a analise comparativa.")
 
@@ -858,7 +863,7 @@ def _render_price_chart(ticker: str) -> None:
     )
 
     st.markdown('<div style="margin-top:10px;"></div>', unsafe_allow_html=True)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # ── Resumo de performance ────────────────────────────────────────
     if comparative:
@@ -1048,7 +1053,7 @@ if "last_result" in st.session_state:
     # ── Section 1: Company profile ───────────────────────────────────────
     with st.expander("Visao Geral da Empresa", expanded=True):
         if result.profile:
-            st.markdown(result.profile)
+            st.markdown(_escape_dollars(result.profile))
         else:
             st.caption("Informacao nao disponivel.")
 
@@ -1062,7 +1067,7 @@ if "last_result" in st.session_state:
             unsafe_allow_html=True,
         )
         if result.financials:
-            st.markdown(result.financials, unsafe_allow_html=True)
+            st.markdown(_escape_dollars(result.financials), unsafe_allow_html=True)
             st.markdown(
                 '<p style="color:#52525b;font-size:11px;font-style:italic;margin:8px 0 0 0;">'
                 'TTM = Trailing Twelve Months (ultimos 12 meses). YoY = Year over Year (variacao anual). '
@@ -1082,7 +1087,7 @@ if "last_result" in st.session_state:
     with st.expander("Noticias Recentes", expanded=True):
         if result.news:
             news_html = render_news_with_badges(result.news)
-            st.markdown(news_html, unsafe_allow_html=True)
+            st.markdown(_escape_dollars(news_html), unsafe_allow_html=True)
         else:
             st.caption("Informacao nao disponivel.")
 
@@ -1092,7 +1097,7 @@ if "last_result" in st.session_state:
             bias = parse_bias(result.synthesis)
             badge_html = render_bias_badge(bias)
             st.markdown(badge_html, unsafe_allow_html=True)
-            st.markdown(result.synthesis, unsafe_allow_html=True)
+            st.markdown(_escape_dollars(result.synthesis), unsafe_allow_html=True)
         else:
             st.caption("Informacao nao disponivel.")
 
@@ -1112,7 +1117,7 @@ if "last_result" in st.session_state:
             data=report_md,
             file_name=f"{ticker}_analise.md",
             mime="text/markdown",
-            use_container_width=True,
+            width="stretch",
         )
 
     with col2:
@@ -1122,7 +1127,7 @@ if "last_result" in st.session_state:
             data=html_report,
             file_name=f"{ticker}_analise.html",
             mime="text/html",
-            use_container_width=True,
+            width="stretch",
         )
 
     # Data source indicator
@@ -1146,7 +1151,7 @@ elif not ticker_input:
     _chip_cols = st.columns(len(_CHIPS))
     for _col, _t in zip(_chip_cols, _CHIPS):
         with _col:
-            if st.button(_t, key=f"chip_{_t}", use_container_width=True):
+            if st.button(_t, key=f"chip_{_t}", width="stretch"):
                 st.session_state["chip_ticker"] = _t
                 st.session_state["auto_analyze"] = True
                 st.rerun()

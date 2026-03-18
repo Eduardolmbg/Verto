@@ -24,35 +24,36 @@
 
 ---
 
-## Instalacao
+## Instalacao Rapida
 
-**Pre-requisitos:** Python 3.10+ e uma API key do [Gemini](https://aistudio.google.com/apikey) ou [Groq](https://console.groq.com/keys).
+**Pre-requisitos:** Python 3.10+ e uma API key gratuita do [Gemini](https://aistudio.google.com/apikey) ou [Groq](https://console.groq.com/keys).
+
+### Windows (2 cliques)
+
+1. Baixe o projeto e execute **`setup.bat`** (instala tudo automaticamente)
+2. Edite o arquivo `.env` e cole sua API key
+3. Execute **`start.bat`** para iniciar
+
+### Mac / Linux
 
 ```bash
 git clone https://github.com/seu-usuario/Verto.git
 cd Verto
+./setup.sh       # instala tudo
+nano .env        # cole sua API key
+./start.sh       # inicia o app
+```
 
+### Manual
+
+```bash
+git clone https://github.com/seu-usuario/Verto.git
+cd Verto
 python -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
-
 pip install -r requirements.txt
-```
-
-Crie um arquivo `.env` na raiz:
-
-```bash
-# Mac/Linux
-cp .env.example .env
-
-# Windows
-copy .env.example .env
-```
-
-Edite o `.env` e preencha sua API key.
-
-## Uso
-
-```bash
+cp .env.example .env       # Windows: copy .env.example .env
+# Edite .env e preencha sua API key
 streamlit run app.py
 ```
 

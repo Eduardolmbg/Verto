@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import pandas as pd
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
+
+# Retry config
+_MAX_RETRIES = 3
+_RETRY_DELAYS = (2, 5, 10)  # segundos entre tentativas
 
 
 def _is_number(value: Any) -> bool:
@@ -23,16 +28,34 @@ class YFinanceClient:
 
         O ticker brasileiro precisa ter .SA no final (ex: PETR4.SA),
         mas o usuario digita sem .SA — a normalizacao e feita aqui.
+        Faz ate 3 tentativas em caso de timeout.
 
         Returns:
             Dicionario com dados estruturados ou {} se falhar.
         """
         yahoo_ticker = self._normalize_ticker(ticker)
 
-        try:
-            stock = yf.Ticker(yahoo_ticker)
-            info = stock.info
+        info = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                stock = yf.Ticker(yahoo_ticker)
+                info = stock.info
+                break
+            except Exception as e:
+                err_str = str(e).lower()
+                is_timeout = "timeout" in err_str or "timed out" in err_str
+                if is_timeout and attempt < _MAX_RETRIES - 1:
+                    delay = _RETRY_DELAYS[attempt]
+                    logger.warning(
+                        "Timeout yfinance para %s (tentativa %d/%d), retry em %ds",
+                        yahoo_ticker, attempt + 1, _MAX_RETRIES, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.exception("Erro yfinance para %s apos %d tentativa(s)", yahoo_ticker, attempt + 1)
+                return {}
 
+        try:
             if not info or info.get("regularMarketPrice") is None:
                 logger.warning("yfinance retornou dados vazios para %s", yahoo_ticker)
                 return {}
@@ -141,13 +164,25 @@ class YFinanceClient:
 
     def get_benchmark_history(self, benchmark: str, period: str = "1y") -> pd.DataFrame:
         """Busca histórico de um benchmark (ex: '^BVSP' para Ibovespa)."""
-        try:
-            stock = yf.Ticker(benchmark)
-            hist = stock.history(period=period)
-            return hist
-        except Exception:
-            logger.exception("Erro ao buscar benchmark %s", benchmark)
-            return pd.DataFrame()
+        for attempt in range(_MAX_RETRIES):
+            try:
+                stock = yf.Ticker(benchmark)
+                hist = stock.history(period=period)
+                return hist
+            except Exception as e:
+                err_str = str(e).lower()
+                is_timeout = "timeout" in err_str or "timed out" in err_str
+                if is_timeout and attempt < _MAX_RETRIES - 1:
+                    delay = _RETRY_DELAYS[attempt]
+                    logger.warning(
+                        "Timeout benchmark %s (tentativa %d/%d), retry em %ds",
+                        benchmark, attempt + 1, _MAX_RETRIES, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.exception("Erro ao buscar benchmark %s", benchmark)
+                return pd.DataFrame()
+        return pd.DataFrame()
 
     def get_cdi_history(self, period: str = "1y") -> pd.DataFrame:
         """Busca CDI acumulado via API do Banco Central (SGS série 12)."""
@@ -192,13 +227,25 @@ class YFinanceClient:
             DataFrame com Open, High, Low, Close, Volume ou vazio se falhar.
         """
         yahoo_ticker = self._normalize_ticker(ticker)
-        try:
-            stock = yf.Ticker(yahoo_ticker)
-            hist = stock.history(period=period)
-            return hist
-        except Exception:
-            logger.exception("Erro ao buscar historico para %s", yahoo_ticker)
-            return pd.DataFrame()
+        for attempt in range(_MAX_RETRIES):
+            try:
+                stock = yf.Ticker(yahoo_ticker)
+                hist = stock.history(period=period)
+                return hist
+            except Exception as e:
+                err_str = str(e).lower()
+                is_timeout = "timeout" in err_str or "timed out" in err_str
+                if is_timeout and attempt < _MAX_RETRIES - 1:
+                    delay = _RETRY_DELAYS[attempt]
+                    logger.warning(
+                        "Timeout historico %s (tentativa %d/%d), retry em %ds",
+                        yahoo_ticker, attempt + 1, _MAX_RETRIES, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.exception("Erro ao buscar historico para %s", yahoo_ticker)
+                return pd.DataFrame()
+        return pd.DataFrame()
 
     def get_capex(self, ticker: str) -> dict:
         """Busca CAPEX do fluxo de caixa anual via yfinance."""
@@ -236,9 +283,27 @@ class YFinanceClient:
     def get_quarterly_trend(self, ticker: str) -> dict:
         """Busca ultimos 5 trimestres de dados financeiros para analise de tendencia."""
         yahoo_ticker = self._normalize_ticker(ticker)
+        q_financials = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                stock = yf.Ticker(yahoo_ticker)
+                q_financials = stock.quarterly_income_stmt
+                break
+            except Exception as e:
+                err_str = str(e).lower()
+                is_timeout = "timeout" in err_str or "timed out" in err_str
+                if is_timeout and attempt < _MAX_RETRIES - 1:
+                    delay = _RETRY_DELAYS[attempt]
+                    logger.warning(
+                        "Timeout trimestral %s (tentativa %d/%d), retry em %ds",
+                        yahoo_ticker, attempt + 1, _MAX_RETRIES, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.debug("Erro ao buscar dados trimestrais para %s: %s", yahoo_ticker, e)
+                return {}
+
         try:
-            stock = yf.Ticker(yahoo_ticker)
-            q_financials = stock.quarterly_income_stmt
 
             result: dict = {"quarters": []}
 

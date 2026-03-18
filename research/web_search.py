@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
@@ -15,6 +16,10 @@ if TYPE_CHECKING:
     from providers.base import BaseLLMProvider
 
 logger = logging.getLogger(__name__)
+
+# Cache simples de noticias por ticker (evita rate limit do DuckDuckGo)
+_news_cache: dict[str, tuple[float, list[dict]]] = {}
+_NEWS_CACHE_TTL = 300  # 5 minutos
 
 _BLOCKED_DOMAINS = [
     "investnews.com.br/listas",
@@ -93,7 +98,7 @@ def _is_relevant(result: dict, ticker: str, company_name: str) -> bool:
     return ticker_lower in text or company_short in text
 
 
-def _ddgs_news(query: str, max_results: int, timelimit: str | None) -> list[dict]:
+def _ddgs_news(query: str, max_results: int, timelimit: str | None, ddgs: DDGS | None = None) -> list[dict]:
     """Busca via ddgs.news() tentando region br-pt e sem region como fallback."""
     for region in ("br-pt", None):
         try:
@@ -102,24 +107,31 @@ def _ddgs_news(query: str, max_results: int, timelimit: str | None) -> list[dict
                 kwargs["timelimit"] = timelimit
             if region:
                 kwargs["region"] = region
-            with DDGS() as ddgs:
+            if ddgs is not None:
                 raw = list(ddgs.news(query, **kwargs))
+            else:
+                with DDGS() as d:
+                    raw = list(d.news(query, **kwargs))
             if raw:
                 return raw
-        except Exception:
+        except Exception as e:
+            logger.debug("ddgs.news falhou para '%s' region=%s: %s", query, region, e)
             continue
     return []
 
 
-def _ddgs_text(query: str, max_results: int) -> list[dict]:
+def _ddgs_text(query: str, max_results: int, ddgs: DDGS | None = None) -> list[dict]:
     """Busca via ddgs.text() e normaliza para o mesmo formato de news."""
     for region in ("pt-br", None):
         try:
             kwargs: dict = {"max_results": max_results}
             if region:
                 kwargs["region"] = region
-            with DDGS() as ddgs:
+            if ddgs is not None:
                 raw = list(ddgs.text(query, **kwargs))
+            else:
+                with DDGS() as d:
+                    raw = list(d.text(query, **kwargs))
             if raw:
                 return [
                     {
@@ -131,7 +143,8 @@ def _ddgs_text(query: str, max_results: int) -> list[dict]:
                     }
                     for r in raw
                 ]
-        except Exception:
+        except Exception as e:
+            logger.debug("ddgs.text falhou para '%s' region=%s: %s", query, region, e)
             continue
     return []
 
@@ -143,7 +156,18 @@ def search_recent_news(ticker: str, company_name: str, max_results: int = 10) ->
     1. ddgs.news() com timelimit="m" (último mês) — filtra por relevância
     2. ddgs.news() sem timelimit — se news recentes insuficientes
     3. ddgs.text() — fallback robusto que sempre acha resultados específicos
+
+    Resultados são cacheados por 5 minutos para evitar rate limit do DuckDuckGo.
     """
+    # Verificar cache
+    cache_key = f"{ticker}_{company_name}"
+    now = time.time()
+    if cache_key in _news_cache:
+        cached_time, cached_results = _news_cache[cache_key]
+        if now - cached_time < _NEWS_CACHE_TTL:
+            logger.info("Usando cache de noticias para %s (%d resultados)", ticker, len(cached_results))
+            return cached_results
+
     queries = [
         f"{ticker} resultados 2025 2026",
         f'"{ticker}" noticias',
@@ -167,23 +191,32 @@ def search_recent_news(ticker: str, company_name: str, max_results: int = 10) ->
                     "source": r.get("source", ""),
                 })
 
-    # Camada 1: news() com timelimit
-    for query in queries:
-        _add(_ddgs_news(query, max_results=5, timelimit="m"))
+    # Reusar uma unica instancia DDGS para reduzir rate limit
+    with DDGS() as ddgs:
+        # Camada 1: news() com timelimit
+        for query in queries:
+            _add(_ddgs_news(query, max_results=5, timelimit="m", ddgs=ddgs))
+            time.sleep(0.5)
 
-    # Camada 2: se insuficiente, news() sem timelimit
-    if len(all_results) < 3:
-        for query in queries[:2]:
-            _add(_ddgs_news(query, max_results=5, timelimit=None))
+        # Camada 2: se insuficiente, news() sem timelimit
+        if len(all_results) < 3:
+            for query in queries[:2]:
+                _add(_ddgs_news(query, max_results=5, timelimit=None, ddgs=ddgs))
+                time.sleep(0.5)
 
-    # Camada 3: fallback text() — sempre acha resultados específicos
-    if len(all_results) < 3:
-        text_query = f"{ticker} {company_name} noticias resultado lucro dividendo"
-        _add(_ddgs_text(text_query, max_results=8))
+        # Camada 3: fallback text() — sempre acha resultados específicos
+        if len(all_results) < 3:
+            text_query = f"{ticker} {company_name} noticias resultado lucro dividendo"
+            _add(_ddgs_text(text_query, max_results=8, ddgs=ddgs))
 
     all_results.sort(key=lambda x: x.get("date", ""), reverse=True)
     all_results = deduplicate_news(all_results)
-    return all_results[:max_results]
+    final = all_results[:max_results]
+
+    # Salvar no cache
+    _news_cache[cache_key] = (now, final)
+
+    return final
 
 
 def format_news_for_prompt(news_results: list[dict]) -> str:
